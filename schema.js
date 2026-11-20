@@ -13,8 +13,6 @@ const end=f('end','پایان','time');
 const s=(k,l,v)=>f(k,l,'select',v);
 const n=(k,l)=>f(k,l,'num');
 const d=(k,l)=>f(k,l,'date');
-const b=(k,l)=>f(k,l,'check');
-const a=(k,l)=>f(k,l,'area');
 
 export const causes=[
  'بی‌دقتی','مفهومی','فراموشی','محاسباتی',
@@ -34,12 +32,9 @@ export const schema={
  ]],
 
  study:['جلسه مطالعه',[
-  subject,
-  topic,
+  subject,topic,
   s('kind','نوع',['آموزش','تمرین','تست','مرور','آزمون']),
-  start,
-  end,
-  minutes,
+  start,end,minutes,
   n('mastery','تسلط (۰ تا ۱۰۰)'),
   n('tests','تعداد تست'),
   n('correct','صحیح'),
@@ -50,50 +45,36 @@ export const schema={
  ]],
 
  topic:['مبحث کنکور',[
-  subject,
-  title,
-  f('chapter','فصل'),
-  f('module','پودمان'),
-  f('sub','زیرمبحث'),
+  subject,title,f('chapter','فصل'),f('module','پودمان'),f('sub','زیرمبحث'),
   s('status','وضعیت',['شروع نشده','در حال مطالعه','نیاز به تمرین','تسلط‌یافته']),
   note
  ]],
 
  error:['تحلیل خطا',[
-  subject,
-  topic,
-  title,
+  subject,topic,title,
   f('question','صورت سؤال','area'),
   s('cause','علت',causes),
   f('answer','راه‌حل','area'),
-  note,
-  d('review','تاریخ مرور')
+  note,d('review','تاریخ مرور')
  ]],
 
  review:['مرور زمان‌بندی‌شده',[
-  subject,
-  topic,
+  subject,topic,
   s('round','نوبت',['اول','دوم','سوم','جمع‌بندی']),
   s('status','وضعیت',['باز','انجام شد']),
   note
  ]],
 
  school:['تکلیف مدرسه',[
-  title,
-  subject,
+  title,subject,
   s('kind','نوع',['تکلیف','امتحان','پروژه','پرسش کلاسی']),
-  start,
-  end,
-  d('due','مهلت'),
-  n('grade','نمره'),
+  start,end,d('due','مهلت'),n('grade','نمره'),
   s('status','وضعیت',['باز','در حال انجام','انجام شده']),
   note
  ]],
 
  video:['دوره آموزشی',[
-  title,
-  f('course','دوره'),
-  topic,
+  title,f('course','دوره'),topic,
   n('length','طول فیلم (دقیقه)'),
   n('watched','محل توقف (دقیقه)'),
   n('active','تمرین مفید (دقیقه)'),
@@ -106,49 +87,31 @@ export const schema={
  ]],
 
  customer:['مشتری اسپیگات',[
-  title,
-  f('contact','راه ارتباطی'),
-  f('product','محصول'),
-  n('count','تعداد'),
-  n('price','قیمت'),
+  title,f('contact','راه ارتباطی'),f('product','محصول'),
+  n('count','تعداد'),n('price','قیمت'),
   s('payment','پرداخت',['نامشخص','بیعانه','کامل','تسویه نشده']),
-  d('delivery','تاریخ تحویل'),
-  f('deliveryTime','زمان تحویل'),
+  d('delivery','تاریخ تحویل'),f('deliveryTime','زمان تحویل'),
   s('status','وضعیت',['جدید','پیگیری','در حال ساخت','ارسال شد','تحویل شد','لغو']),
-  d('callback','تماس بعدی'),
-  f('callbackTime','ساعت تماس','time'),
-  note
+  d('callback','تماس بعدی'),f('callbackTime','ساعت تماس','time'),note
  ]],
 
  spigot:['محتوای آقای اسپیگات',[
-  title,
-  s('status','وضعیت',['ایده','سناریو','ضبط','تدوین','منتشر شد']),
-  f('hook','قلاب'),
-  f('script','سناریو','area'),
-  f('caption','کپشن','area'),
-  f('cover','کاور'),
-  f('metrics','آمار عملکرد','area'),
-  note
+  title,s('status','وضعیت',['ایده','سناریو','ضبط','تدوین','منتشر شد']),
+  f('hook','قلاب'),f('script','سناریو','area'),
+  f('caption','کپشن','area'),f('cover','کاور'),
+  f('metrics','آمار عملکرد','area'),note
  ]],
 
  vitra:['محتوای ویترا',[
-  title,
-  s('status','وضعیت',['ایده','سناریو','ضبط','تدوین','منتشر شد']),
-  f('hook','قلاب'),
-  f('script','سناریو','area'),
-  f('caption','کپشن','area'),
-  f('cover','کاور'),
-  f('subtitle','زیرنویس','area'),
-  f('metrics','آمار عملکرد','area'),
-  note
+  title,s('status','وضعیت',['ایده','سناریو','ضبط','تدوین','منتشر شد']),
+  f('hook','قلاب'),f('script','سناریو','area'),
+  f('caption','کپشن','area'),f('cover','کاور'),
+  f('subtitle','زیرنویس','area'),f('metrics','آمار عملکرد','area'),note
  ]],
 
  english:['تمرین انگلیسی',[
   s('kind','مهارت',['لغت','گرامر','شنیداری','خواندن','نوشتن','مکالمه','آزمون دوره‌ای']),
-  title,
-  minutes,
-  note,
-  d('review','مرور بعدی')
+  title,minutes,note,d('review','مرور بعدی')
  ]],
 
  skill:['تمرین مهارت',[
@@ -173,8 +136,7 @@ export const schema={
  exercise:['تحرک و ورزش',[
   title,
   s('kind','نوع',['پیاده‌روی','یوگا','قدرتی','کششی','سایر']),
-  minutes,
-  note
+  minutes,note
  ]],
 
  food:['تغذیه و آب',[
@@ -192,9 +154,7 @@ export const schema={
 
  phone:['استفاده از گوشی',[
   s('kind','نوع',['شبکه اجتماعی','پیام‌رسان','آموزشی','سرگرمی','کار']),
-  minutes,
-  f('trigger','محرک'),
-  note
+  minutes,f('trigger','محرک'),note
  ]],
 
  journal:['بازنگری روزانه',[
@@ -206,8 +166,7 @@ export const schema={
 
  reflection:['بازنگری هفتگی و ماهانه',[
   s('period','نوع بازنگری',['هفتگی','ماهانه']),
-  d('from','شروع دوره'),
-  d('to','پایان دوره'),
+  d('from','شروع دوره'),d('to','پایان دوره'),
   f('accomplishment','مهم‌ترین دستاوردهای این دوره','area'),
   f('strength','نقاط قوت عملکردم','area'),
   f('blocker','مهم‌ترین موانع و مشکلات','area'),
@@ -222,7 +181,7 @@ export const groups={
  plan:['برنامه هفتگی','▦',[]],
  study:['کنکور','✎',['study','topic','error','review','video']],
  projects:['پروژه‌ها','◇',['customer','spigot','vitra']],
- growth:['رشد فردی','✦',['english','skill']],
+ growth:['رشد فردی','✦',['english','skill','sleep','exercise','food','care','phone','journal']],
  reports:['گزارش‌ها','▤',['reflection']],
  settings:['تنظیمات','⚙',[]]
 };
