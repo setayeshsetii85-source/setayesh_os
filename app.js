@@ -178,15 +178,18 @@ function bars(rows){
  return rows.length?`<div class="bars">${rows.map(([k,v,max,label])=>`<div><span>${esc(k)}</span><progress value="${Math.max(0,v)}" max="${max||1}" aria-label="${esc(k)}"></progress><strong>${label}</strong></div>`).join('')}</div>`:nothing();
 }
 
-/* گزارش‌های ارتقایافته */
+/* گزارش‌های روزانه، هفتگی و ماهانه */
 function reports(){
  const list=m.range(reportDate,mode);
  const st=m.stats(state,list);
- const previousDate=m.addDays(list[0],-1);
- const prevList=m.range(previousDate,mode);
+
+ // مقایسه با بازه قبلی هم‌اندازه، نه فقط یک روز قبل از شروع بازه
+ const prevList=m.previousRange(reportDate,mode);
  const prev=m.stats(state,prevList);
 
  const done=st.tasks.filter(x=>x.status==='انجام شد').length;
+ const prevDone=prev.tasks.filter(x=>x.status==='انجام شد').length;
+
  const subject=m.subjects.map(s=>{
   const a=st.study.filter(x=>x.subject===s);
   const sum=k=>a.reduce((p,x)=>p+(+x[k]||0),0);
@@ -224,7 +227,7 @@ function reports(){
 
  const weekBars=list.map((d,i)=>{
   const v=dailyData[i];
-  const percent=goal?Math.min(100,v.goal?v.m/v.goal*100:0):0;
+  const percent=v.goal?Math.min(100,v.m/v.goal*100):0;
   const dayName=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{weekday:'short'}).format(m.dateOf(d));
   return `<div class="week-column">
    <div class="column-value">${N(v.m)} د</div>
@@ -233,12 +236,18 @@ function reports(){
   </div>`;
  }).join('');
 
+ // گروه‌بندی ماه بر اساس هفته‌های واقعی تقویم
  const monthlyGroups=[];
  if(mode==='ماهانه'){
-  for(let i=0;i<list.length;i+=7){
-   const dates=list.slice(i,i+7);
+  const groupsByWeek=new Map();
+  for(const d of list){
+   const start=m.weekStart(d);
+   if(!groupsByWeek.has(start))groupsByWeek.set(start,[]);
+   groupsByWeek.get(start).push(d);
+  }
+  for(const [start,dates] of groupsByWeek){
    const value=dates.reduce((a,d)=>a+m.stats(state,[d]).m,0);
-   monthlyGroups.push({label:`بخش ${monthlyGroups.length+1}`,value,dates});
+   monthlyGroups.push({label:fmt(start),value});
   }
  }
 
@@ -251,7 +260,7 @@ function reports(){
   ['مطالعه','study'],
   ['زبان','english'],
   ['ورزش','exercise'],
-  ['بازنگری','journal']
+  ['بازنگری روزانه','journal']
  ];
  const habits=habitTypes.map(([label,type])=>{
   const dates=new Set(st.all.filter(x=>x.type===type).map(x=>x.date));
@@ -259,7 +268,6 @@ function reports(){
  });
  const habitMax=Math.max(1,...habits.map(x=>x[1]));
 
- const dailyComparison=mode==='روزانه'?`<p class="small">مقایسه با روز قبل</p>`:'';
  const periodComparison=`
   <section class="card">
    <h2>مقایسه با دوره قبل</h2>
@@ -268,9 +276,9 @@ function reports(){
     ${compareCard('تعداد تست',st.test,prev.test,N)}
     ${compareCard('زبان',st.english,prev.english,D)}
     ${compareCard('ورزش',st.exercise,prev.exercise,D)}
-    ${compareCard('کارهای تکمیل‌شده',done,prev.tasks.filter(x=>x.status==='انجام شد').length,N)}
+    ${compareCard('کارهای تکمیل‌شده',done,prevDone,N)}
    </div>
-   ${dailyComparison}
+   <p class="small">مقایسه بر اساس یک بازه هم‌اندازه پیش از دوره انتخاب‌شده انجام می‌شود.</p>
   </section>`;
 
  const studyChart=mode==='روزانه'?ring:mode==='هفتگی'?`
@@ -279,10 +287,15 @@ function reports(){
 
  const subjectMax=Math.max(60,...subject.map(x=>x[1]));
 
+ const reflections=st.all
+  .filter(x=>x.type==='reflection'||x.type==='journal')
+  .sort((a,b)=>b.date.localeCompare(a.date));
+
  return heading('گزارش‌ها','اعداد از رکوردهای ثبت‌شده محاسبه می‌شوند؛ اطلاعات ثبت‌نشده در نمودارها نمایش داده نمی‌شوند.')
  +`<div class="tabs">
   ${['روزانه','هفتگی','ماهانه'].map(x=>B('mode',x,x,mode===x?'picked':'')).join('')}
-  ${B('new','＋ بازنگری روزانه','journal','primary')}
+  ${B('new','＋ بازنگری روزانه','journal')}
+  ${B('new','＋ بازنگری هفتگی / ماهانه','reflection','primary')}
  </div>
  ${datePicker(reportDate,'report-date')}
 
@@ -295,7 +308,7 @@ function reports(){
 
  <div class="cards">
   <section class="card">
-   <h2>${mode==='روزانه'?'سهم هدف مطالعه امروز':mode==='هفتگی'?'روند مطالعه در هفته':'مطالعه در بخش‌های ماه'}</h2>
+   <h2>${mode==='روزانه'?'سهم هدف مطالعه امروز':mode==='هفتگی'?'روند مطالعه در هفته':'مطالعه در هفته‌های ماه'}</h2>
    ${studyChart}
   </section>
 
@@ -329,7 +342,7 @@ function reports(){
 
   <section class="card">
    <h2>بازنگری‌های ذخیره‌شده</h2>
-   <div class="list">${st.all.filter(x=>x.type==='journal').map(record).join('')||nothing()}</div>
+   <div class="list">${reflections.map(record).join('')||nothing('هنوز بازنگری روزانه یا دوره‌ای ثبت نشده است.')}</div>
   </section>
  </div>`;
 }
@@ -417,6 +430,14 @@ function editor(type,x={},date,template){
    if(type==='video'&&+v.watched>+v.length)throw Error('محل توقف بیشتر از طول فیلم است.');
    if(type==='sleep'&&v.bed===v.wake)throw Error('ساعت خواب و بیداری یکسان است.');
    if(type==='journal'&&!(v.accomplishment||v.blocker||v.tomorrow||v.note))throw Error('حداقل یک پاسخ بنویس.');
+
+   // اعتبارسنجی بازنگری هفتگی و ماهانه
+   if(type==='reflection'&&!(v.accomplishment||v.strength||v.blocker||v.lesson||v.nextAction||v.note))
+    throw Error('حداقل یک بخش از بازنگری را تکمیل کن.');
+
+   if(type==='reflection'&&v.from&&v.to&&v.from>v.to)
+    throw Error('تاریخ پایان دوره نباید قبل از تاریخ شروع باشد.');
+
    await change(q=>{
     if(template)q.overrides[x.id]={status:'حذف'};
     if(edit)q.items=q.items.map(y=>y.id===item.id?item:y);
