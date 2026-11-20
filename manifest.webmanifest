@@ -1,1 +1,27 @@
-{"id":"/","name":"SETAYESH OS — دستیار شخصی","short_name":"SETAYESH OS","description":"دفتر شخصی برنامه، مطالعه و گزارش","lang":"fa","dir":"rtl","start_url":"/","scope":"/","display":"standalone","theme_color":"#32192e","background_color":"#f7f3ee","icons":[{"src":"/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]}
+{
+  "id": "./",
+  "name": "SETAYESH OS — دستیار شخصی",
+  "short_name": "SETAYESH OS",
+  "description": "دفتر شخصی برنامه، مطالعه و گزارش",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#32192e",
+  "background_color": "#f7f3ee",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
