@@ -317,7 +317,6 @@ const growthSections=[
 
 function growthPage(){
  const today=m.iso();
- const week=m.range(today,'هفتگی');
  const last7=Array.from({length:7},(_,i)=>m.addDays(today,i-6));
 
  const entries=state.items.filter(x=>
@@ -428,14 +427,126 @@ function bars(rows){
  ).join('')}</div>`:nothing();
 }
 
+/* ابزارهای گزارش و تحلیل */
+
+function percent(a,b){
+ return b?Math.round(a/b*100):null;
+}
+
+function periodLabel(date){
+ return new Intl.DateTimeFormat('fa-IR-u-ca-persian',{
+  month:'long',day:'numeric'
+ }).format(m.dateOf(date));
+}
+
+function periodStats(date,period){
+ const days=m.range(date,period);
+ const stats=m.stats(state,days);
+ return {days,stats};
+}
+
+function taskCompletion(stats){
+ const total=stats.tasks.length;
+ const done=stats.tasks.filter(x=>x.status==='انجام شد').length;
+ return {total,done,percent:percent(done,total)};
+}
+
+function growthCounts(days){
+ const list=state.items.filter(x=>
+  groups.growth[2].includes(x.type)&&days.includes(x.date)
+ );
+
+ const types={
+  'ژورنال':['journal'],
+  'یادگیری':['english','skill'],
+  'ورزش':['exercise'],
+  'خواب':['sleep'],
+  'تغذیه':['food'],
+  'مراقبت':['care'],
+  'گوشی':['phone']
+ };
+
+ return Object.entries(types).map(([name,ids])=>[
+  name,
+  list.filter(x=>ids.includes(x.type)).length
+ ]);
+}
+
+function qualityOfDay(date){
+ const stats=m.stats(state,[date]);
+ const completion=taskCompletion(stats);
+ const hasStudy=stats.m>0;
+ const hasJournal=stats.all.some(x=>x.type==='journal');
+ const hasRest=stats.all.some(x=>x.type==='sleep');
+ const hasMovement=stats.all.some(x=>x.type==='exercise');
+
+ const known=[
+  completion.total>0,
+  hasStudy,
+  hasJournal,
+  hasRest,
+  hasMovement
+ ].filter(Boolean).length;
+
+ if(!known)return {
+  score:null,
+  text:'اطلاعات کافی برای ارزیابی این روز ثبت نشده است.'
+ };
+
+ let score=0,weight=0;
+
+ if(completion.percent!==null){
+  score+=completion.percent*0.35;
+  weight+=0.35;
+ }
+
+ if(hasStudy){score+=100*0.25;weight+=0.25;}
+ if(hasJournal){score+=100*0.15;weight+=0.15;}
+ if(hasRest){score+=100*0.15;weight+=0.15;}
+ if(hasMovement){score+=100*0.10;weight+=0.10;}
+
+ const result=Math.round(score/weight);
+
+ return {
+  score:result,
+  text:result>=80?'ثبت‌های امروز نشان‌دهنده عملکرد منظم بوده‌اند.':
+   result>=60?'بخشی از کارها انجام شده؛ چند مورد کوچک برای بهبود وجود دارد.':
+   'امروز را بدون سرزنش مرور کن و فقط یک قدم کوچک برای فردا انتخاب کن.'
+ };
+}
+
+function comparisonRows(current,previous){
+ const a=current.stats,b=previous.stats;
+
+ return [
+  ['مطالعه مفید',a.m,b.m,D(a.m),D(b.m)],
+  ['تعداد تست',a.test,b.test,N(a.test),N(b.test)],
+  ['زبان',a.english,b.english,D(a.english),D(b.english)],
+  ['ورزش',a.exercise,b.exercise,D(a.exercise),D(b.exercise)],
+  ['زمان گوشی',a.phone,b.phone,D(a.phone),D(b.phone)]
+ ];
+}
+
+function comparisonText(a,b){
+ if(a===b)return 'بدون تغییر';
+ return a>b?`افزایش ${D(a-b)}`:`کاهش ${D(b-a)}`;
+}
+
+function reviewButton(period,date){
+ return B('periodReview',`＋ ثبت مرور ${period}`,`${period}|${date}`,'primary');
+}
+
 function reports(){
- const list=m.range(reportDate,mode);
- const st=m.stats(state,list);
- const prev=mode==='ماهانه'?
-  m.stats(state,m.range(m.addDays(list[0],-1),'ماهانه')):null;
+ const current=periodStats(reportDate,mode);
+ const list=current.days;
+ const st=current.stats;
+
+ const previousDate=m.addDays(list[0],-1);
+ const previous=periodStats(previousDate,mode);
 
  const max=Math.max(60,...list.map(d=>m.stats(state,[d]).m));
- const done=st.tasks.filter(x=>x.status==='انجام شد').length;
+ const completion=taskCompletion(st);
+ const quality=qualityOfDay(reportDate);
 
  const subject=m.subjects.map(s=>{
   const a=st.study.filter(x=>x.subject===s);
@@ -452,36 +563,95 @@ function reports(){
  const sleep=st.sleep.length?
   D(Math.round(st.sleep.reduce((a,b)=>a+b,0)/st.sleep.length)):'—';
 
- return heading('گزارش‌ها','اعداد از رکوردها محاسبه می‌شوند؛ گزارش متنی را جداگانه ثبت کن.')+
+ const comparison=comparisonRows(current,previous);
+ const habits=growthCounts(list);
+ const habitMax=Math.max(1,...habits.map(x=>x[1]));
+
+ const journal=st.all.filter(x=>x.type==='journal'||x.type==='reflection');
+
+ const periodReview=mode==='هفتگی'?
+  reviewButton('هفتگی',list.at(-1)):
+  mode==='ماهانه'?reviewButton('ماهانه',list.at(-1)):'';
+
+ const title=mode==='روزانه'?'گزارش روزانه':
+  mode==='هفتگی'?'گزارش هفتگی':'گزارش ماهانه';
+
+ return heading(title,'عملکردت را بر اساس اطلاعاتی که ثبت کرده‌ای بررسی کن.')+
 
  `<div class="tabs">
  ${['روزانه','هفتگی','ماهانه'].map(x=>B('mode',x,x,mode===x?'picked':'')).join('')}
  ${B('new','＋ بازنگری روزانه','journal','primary')}
- ${B('new','＋ بازنگری دوره‌ای','reflection')}
+ ${periodReview}
  </div>
 
  ${datePicker(reportDate,'report-date')}
 
+ <section class="card">
+ <h2>خلاصه عملکرد</h2>
  <div class="metrics">
  ${metric('مطالعه مفید',D(st.m))}
- ${metric('تحقق هدف',`${N(st.goal?st.m/st.goal*100:0)}٪`)}
+ ${metric('تحقق هدف مطالعه',`${N(st.goal?st.m/st.goal*100:0)}٪`)}
  ${metric('تست / درصد تجمیعی',`${N(st.test)} / ${st.percent===null?'—':N(st.percent)+'٪'}`)}
  ${metric('میانگین خواب ثبت‌شده',sleep)}
  </div>
+ </section>
 
  <div class="cards">
  <section class="card">
- <h2>مطالعه و تست در زمان</h2>
+ <h2>تکمیل وظایف</h2>
+ ${completion.percent===null?
+ nothing('برای این بازه وظیفه‌ای ثبت نشده است.'):
+ `<strong class="big-number">${N(completion.percent)}٪</strong>
+ <progress value="${completion.percent}" max="100" aria-label="درصد تکمیل وظایف"></progress>
+ <p>${N(completion.done)} کار انجام‌شده از ${N(completion.total)} کار</p>`}
+ </section>
+
+ <section class="card">
+ <h2>کیفیت روز انتخاب‌شده</h2>
+ ${quality.score===null?
+ nothing(quality.text):
+ `<strong class="big-number">${N(quality.score)} از ۱۰۰</strong>
+ <progress value="${quality.score}" max="100" aria-label="امتیاز ثبت‌های روز"></progress>
+ <p>${esc(quality.text)}</p>`}
+ <small class="muted">این امتیاز فقط یک شاخص تقریبی از ثبت‌هاست؛ معیار ارزش شخصی یا قضاوت درباره تو نیست.</small>
+ </section>
+ </div>
+
+ <section class="card">
+ <h2>روند مطالعه در این بازه</h2>
  ${bars(list.map(d=>{
   const v=m.stats(state,[d]);
   return [
-   new Intl.DateTimeFormat('fa-IR-u-ca-persian',{month:'short',day:'numeric'}).format(m.dateOf(d)),
+   periodLabel(d),
    v.m,max,
    `${N(v.m)} د · ${N(v.test)} تست${v.percent===null?'':` · ${N(v.percent)}٪`}`
   ];
  }))}
  </section>
 
+ <section class="card">
+ <h2>پیشرفت عادت‌ها</h2>
+ <p class="muted">تعداد دفعات ثبت هر عادت در بازه انتخاب‌شده</p>
+ ${bars(habits.map(([name,count])=>[
+  name,count,habitMax,N(count)+' بار'
+ ]))}
+ </section>
+
+ <section class="card">
+ <h2>مقایسه با بازه قبلی</h2>
+ <p class="muted">${mode==='روزانه'?'روز قبل':mode==='هفتگی'?'هفته قبل':'ماه قبل'}</p>
+ <div class="list">
+ ${comparison.map(([name,a,b,av,bv])=>`
+  <div class="item">
+   <strong>${name}</strong>
+   <p>این بازه: ${av} · بازه قبل: ${bv}</p>
+   <small>${comparisonText(a,b)}</small>
+  </div>
+ `).join('')}
+ </div>
+ </section>
+
+ <div class="cards">
  <section class="card">
  <h2>عملکرد درس‌ها</h2>
  ${bars(subject.map(([s,v,p,t])=>
@@ -495,19 +665,18 @@ function reports(){
  <section class="card">
  <h2>مرور عملکرد</h2>
  <p>روزهای دارای مطالعهٔ ثبت‌شده: ${N(new Set(st.all.filter(x=>x.type==='study'&&x.minutes>0||x.type==='video'&&x.active>0).map(x=>x.date)).size)} از ${N(list.length)}</p>
- <p>کارهای تکمیل‌شده: ${N(done)} · باز: ${N(st.tasks.length-done)}</p>
+ <p>کارهای تکمیل‌شده: ${N(completion.done)} · باز: ${N(completion.total-completion.done)}</p>
  <p>زبان: ${D(st.english)} · ورزش / ریکاوری: ${D(st.exercise)}</p>
  <p>زمان‌های ثبت‌شده در دفتر گوشی / کار: ${D(st.phone)}</p>
  <p>تمرین مهارت: ${N(st.all.filter(x=>x.type==='skill').length)} · محتوای پروژه: ${N(st.all.filter(x=>['spigot','vitra'].includes(x.type)).length)} · سفارش: ${N(st.all.filter(x=>x.type==='customer').length)}</p>
- ${prev?`<p>ماه قبل: ${D(prev.m)} و ${N(prev.test)} تست. تغییر مطالعه: ${st.m>=prev.m?'+':'−'}${D(Math.abs(st.m-prev.m))}</p>`:''}
  <p class="hint">${st.m<st.goal?'هدف کامل نشده؛ یک بلوک مناسب‌تر انتخاب کن، نه اینکه خواب را کوتاه کنی.':'هدف مقایسه محقق شده؛ کیفیت تمرین و استراحت را مرور کن.'}</p>
  </section>
+ </div>
 
  <section class="card">
  <h2>بازنگری‌های ذخیره‌شده</h2>
- <div class="list">${st.all.filter(x=>x.type==='journal'||x.type==='reflection').map(record).join('')||nothing()}</div>
- </section>
- </div>`;
+ <div class="list">${journal.map(record).join('')||nothing()}</div>
+ </section>`;
 }
 
 function settings(){
@@ -675,6 +844,28 @@ function editor(type,x={},date,template){
  };
 }
 
+function openPeriodReview(period,date){
+ if(!schema.reflection){
+  toast('ساختار بازنگری دوره‌ای در schema.js موجود نیست.');
+  return;
+ }
+
+ const days=m.range(date,period==='هفتگی'?'هفتگی':'ماهانه');
+ const from=days[0],to=days.at(-1);
+
+ editor('reflection',{
+  period,
+  from,
+  to,
+  accomplishment:'',
+  strength:'',
+  blocker:'',
+  lesson:'',
+  nextAction:'',
+  note:''
+ },to);
+}
+
 function getTask(id){
  return m.agenda(state,selected).find(x=>x.id===id);
 }
@@ -775,6 +966,12 @@ document.addEventListener('click',async e=>{
    case 'new':
     if(schema[id])editor(id,{},page==='plan'?selected:page==='reports'?reportDate:undefined);
     break;
+
+   case 'periodReview':{
+    const [period,date]=id.split('|');
+    openPeriodReview(period,date);
+    break;
+   }
 
    case 'edit':{
     const x=state.items.find(y=>y.id===id);
