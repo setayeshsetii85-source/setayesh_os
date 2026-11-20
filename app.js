@@ -1,751 +1,196 @@
-import * as m from './model.js';
-import {schema,groups,lessons} from './schema.js';
-import {load,save,clean} from './store.js';
-import {pushView,bindPush,pushHint} from './push.js';
+import {subjects,categories} from './model.js';
 
-const $=s=>document.querySelector(s), view=$('#view'), dialog=$('#dialog');
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const B=(a,text,id='',cl='')=>`<button type="button" class="${cl}" data-action="${a}" data-id="${esc(id)}">${text}</button>`;
-const nothing=(s='هنوز رکوردی ثبت نشده است.')=>`<div class="empty">${s}</div>`;
-const metric=(k,v)=>`<div class="metric"><small>${k}</small><strong>${v}</strong></div>`;
-const tag=s=>`<span class="tag">${esc(s)}</span>`;
-const fmt=m.pretty, N=m.num, T=m.time, D=m.duration;
+const f=(k,l,t='text',v)=>[k,l,t,v];
 
-let state, page='home', tab={}, selected=m.iso(), reportDate=m.iso(), mode='روزانه', filter='', lastOp=false, toastTimer, installer, counter;
+const title=f('title','عنوان','required');
+const note=f('note','یادداشت','area');
+const subject=f('subject','درس','select',subjects);
+const topic=f('topic','مبحث');
+const minutes=f('minutes','مدت مفید (دقیقه)','num');
+const start=f('start','شروع','time');
+const end=f('end','پایان','time');
 
-function toast(s){
- $('#toast').textContent=s;
- clearTimeout(toastTimer);
- toastTimer=setTimeout(()=>$('#toast').textContent='',4500);
-}
+const s=(k,l,v)=>f(k,l,'select',v);
+const n=(k,l)=>f(k,l,'num');
+const d=(k,l)=>f(k,l,'date');
 
-async function change(fn){
- if(lastOp)throw Error('در حال ذخیره‌سازی؛ دوباره تلاش کنید.');
- lastOp=true;
- try{
-  const draft=structuredClone(state);
-  fn(draft);
-  state=await save(clean(draft),state.rev);
-  render();
- }finally{lastOp=false;}
-}
-
-function tick(){
- const now=new Date();
- $('#clock').textContent=new Intl.DateTimeFormat('fa-IR',{hour:'2-digit',minute:'2-digit'}).format(now);
- $('#connection').textContent=navigator.onLine?'محلی':'آفلاین';
- const spot=$('#now-task');
- if(spot&&state)spot.textContent=actual().label;
-}
-
-function actual(){
- const now=new Date(),h=now.getHours()*60+now.getMinutes(),day=m.iso(now);
- const rows=m.agenda(state,day).filter(x=>x.status!=='انجام شد');
- const cur=rows.find(x=>x.start&&m.mins(x.start)<=h&&m.mins(x.end)>h);
- const next=rows.find(x=>x.start&&m.mins(x.start)>h);
- return {label:cur?`الان: ${cur.title}`:next?`بعدی: ${T(next.start)} · ${next.title}`:'بلوک زمان‌دار دیگری نمانده است.'};
-}
-
-function heading(title,subtitle=''){
- return `<div class="page-title"><h1>${title}</h1>${subtitle?`<p class="muted">${subtitle}</p>`:''}</div>`;
-}
-
-function datePicker(date,id){
- return `<div class="row calendar"><strong>${fmt(date)}</strong><label>انتخاب تاریخ<input aria-label="انتخاب تاریخ" type="date" id="${id}" value="${esc(date)}" min="2000-01-01" max="2099-12-31"></label></div>`;
-}
-
-function row(x,opts=true){
- const id=x.id,done=x.status==='انجام شد';
- return `<div class="item ${done?'done':''}">
-  <div class="row"><strong>${esc(x.title)}</strong>${tag(x.fixed?'زمان محفوظ':x.status||'باز')}</div>
-  <small>${x.start?`${T(x.start)} تا ${T(x.end)}`:x.fixed?`پایان ${T(x.end)} · شروع از تنظیمات`:'بدون ساعت'} · ${esc(x.category)}${x.priority==='بالا'?' · اولویت بالا':''}</small>
-  ${x.note?`<p>${esc(x.note)}</p>`:''}
-  ${opts&&!x.fixed?`<div class="actions">${B('toggle',done?'بازگشایی':'✓ انجام شد',id)}${B('editTask','ویرایش',id)}${!done&&x.start?B('move','پیشنهاد انتقال',id):''}${!done&&x.start?B('taskReminder','اعلان',id):''}${B('removeTask','حذف',id,'danger')}</div>`:''}
- </div>`;
-}
-
-function backlog(){
- const today=m.iso();
- return state.items.flatMap(x=>{
-  const d=x.type==='review'?(x.status==='انجام شد'?'':x.date):x.review;
-  if(!d||d>today)return [];
-  if(x.type!=='review'&&state.items.some(r=>r.type==='review'&&r.note===`مبدأ:${x.id}`&&r.status==='انجام شد'&&r.date===d))return [];
-  return [{x,d}];
- }).sort((a,b)=>a.d.localeCompare(b.d));
-}
-
-function home(){
- const d=m.iso(), rows=m.agenda(state,d), st=m.stats(state,[d]);
- const open=st.tasks.filter(x=>x.status!=='انجام شد');
- const done=st.tasks.length-open.length, q=backlog(), sleep=st.sleep.at(-1);
- const school=st.all.filter(x=>x.type==='school'&&x.status!=='انجام شده').length;
- const planned=rows.filter(x=>x.category==='مطالعه'&&x.start&&x.end).reduce((a,x)=>a+m.mins(x.end)-m.mins(x.start),0);
- const priority=[
-  ...open.filter(x=>x.priority==='بالا'),
-  ...open.filter(x=>x.priority!=='بالا'&&['مطالعه','مدرسه','مرور'].includes(x.category)),
-  ...open.filter(x=>x.priority!=='بالا'&&!['مطالعه','مدرسه','مرور'].includes(x.category))
- ].slice(0,3);
- const later=rows.filter(x=>x.start&&x.status!=='انجام شد'&&!x.fixed&&m.mins(x.end)<=new Date().getHours()*60+new Date().getMinutes());
-
- return `<section class="hero">
-  <small>${fmt(d)} · فضای شخصی من</small>
-  <h1>امروز، یک قدم جلوتر</h1>
-  <p>هر روز، یک قدم به نسخه توانمندتر خودم نزدیک‌تر می‌شوم.</p>
-  <div class="actions">${B('start','فقط شروع کن','','primary')}${B('new','ثبت مطالعه','study')}${B('new','بازنگری امروز','journal')}</div>
- </section>
- <div class="metrics">
-  ${metric('مطالعه مفید / هدف',`${D(st.m)} / ${D(st.goal)}`)}
-  ${metric('تست امروز',N(st.test))}
-  ${metric('تکمیل کارهای برنامه',`${N(st.tasks.length?100*done/st.tasks.length:0)}٪`)}
-  ${metric('خواب ثبت‌شده',sleep==null?'—':D(sleep))}
- </div>
- <div class="cards">
-  <section class="card">
-   <h2>الان چه کاری باید انجام بدهم؟</h2>
-   <p id="now-task">${esc(actual().label)}</p>
-   <small>مطالعه در تقویم: ${D(planned)} · زبان ثبت‌شده: ${D(st.english)}</small>
-   ${later.length?`<div class="warn">${N(later.length)} بلوک پایان یافته و هنوز باز است. در برنامه می‌توانی انتقال را بررسی و تأیید کنی.</div>`:''}
-   <a class="button" href="#plan">برنامه امروز ←</a>
-  </section>
-  <section class="card">
-   <h2>سه اولویت باز</h2>
-   ${priority.length?`<ol>${priority.map(x=>`<li>${esc(x.title)}</li>`).join('')}</ol>`:nothing('کار بازِ اولویت‌دار نداری.')}
-  </section>
-  <section class="card">
-   <h2>مرورهای رسیده یا عقب‌افتاده</h2>
-   ${q.length?`<ul>${q.slice(0,5).map(({x,d})=>`<li><small>${fmt(d)} · </small>${esc(x.topic||x.title||x.subject||schema[x.type][0])} ${B('doneReview','ثبت انجام مرور',x.id)}</li>`).join('')}</ul>`:nothing('مرور سررسیدشده‌ای نیست.')}
-  </section>
-  <section class="card">
-   <h2>مدرسه و پروژه‌ها</h2>
-   <p>موارد باز مدرسه برای امروز: ${N(school)}</p>
-   <ul>${rows.filter(x=>x.category==='پروژه').map(x=>`<li>${esc(x.title)} · ${T(x.start)}</li>`).join('')}</ul>
-   <p class="small">${pushHint()}</p>
-  </section>
- </div>`;
-}
-
-function planPage(){
- const qs=m.agenda(state,selected), wk=m.range(selected,'هفتگی');
- const planned=qs.filter(x=>x.start&&x.end&&x.category==='مطالعه').reduce((a,x)=>a+m.mins(x.end)-m.mins(x.start),0);
- return heading('برنامه هفتگی','شنبه تا جمعه؛ تغییر هر روز روی تاریخ‌های دیگر اعمال نمی‌شود.')
- +`<div class="actions">${B('week','هفته قبل','-7')}${B('week','امروز','0')}${B('week','هفته بعد','7')}${B('new','＋ افزودن کار','task','primary')}</div>
- <div class="week">${wk.map((d,i)=>`<button type="button" class="${selected===d?'picked':''}" data-action="day" data-id="${d}">${m.days[i]}<small>${new Intl.DateTimeFormat('fa-IR-u-ca-persian',{day:'numeric'}).format(m.dateOf(d))}</small></button>`).join('')}</div>
- ${datePicker(selected,'plan-date')}
- <p class="hint">مطالعه در تقویم: ${D(planned)} · هدف مقایسه: ${D(m.target(selected,state.settings))}. علامت‌زدن بلوک معادل ثبت مطالعه مفید نیست.</p>
- ${m.weekday(selected)<5&&!state.settings.schoolStart?'<p class="warn">شروع مدرسه مشخص نیست؛ بلوک صبح را با زمان خروج تطبیق بده یا ساعت مدرسه را در تنظیمات وارد کن.</p>':''}
- <div class="list">${qs.map(x=>row(x)).join('')||nothing()}</div>`;
-}
-
-const dateNames={
- task:'تاریخ برنامه',
- customer:'تاریخ سفارش',
- spigot:'تاریخ برنامه / انتشار',
- vitra:'تاریخ برنامه / انتشار',
- sleep:'تاریخ بیداری',
- review:'تاریخ مرور'
-};
-
-const primary=x=>x.title||x.topic||x.subject||x.accomplishment||x.kind||schema[x.type][0];
-
-function record(x){
- const [name,fields]=schema[x.type];
- return `<article class="item">
-  <div class="row"><strong>${esc(primary(x))}</strong>${x.status?tag(x.status):tag(name)}</div>
-  <small>${fmt(x.date)}</small>
-  ${x.type==='study'?` · <small>${D(x.minutes||0)} · ${N(x.tests||0)} تست${x.tests?` · ${N(m.pct(+x.correct||0,+x.wrong||0,+x.tests,state.settings.negative))}٪`:''}</small>`:''}
-  ${x.type==='sleep'?` · <small>${D(m.elapsed(x.bed,x.wake))}</small>`:''}
-  ${x.type==='video'?` · <small>ادامه از دقیقه ${N(x.watched||0)}</small>`:''}
-  <details><summary>جزئیات</summary>${fields.filter(([k])=>x[k]!==undefined&&x[k]!=='').map(([k,l,t])=>`<div><small>${esc(l)}: </small>${t==='date'?fmt(x[k]):t==='time'?T(x[k]):t==='num'?N(x[k]):esc(x[k])}</div>`).join('')}</details>
-  <div class="actions">${B('edit','ویرایش',x.id)}${(x.callback||x.review||x.due)&&x.type!=='task'?B('linkedReminder','اعلان',x.id):''}${B('delete','حذف',x.id,'danger')}</div>
- </article>`;
-}
-
-function listPage(){
- const g=groups[page], t=tab[page]||g[2][0], term=filter.trim().toLocaleLowerCase('fa');
- const entries=state.items.filter(x=>x.type===t&&(!term||Object.values(x).some(y=>String(y).toLocaleLowerCase('fa').includes(term)))).sort((a,b)=>b.date.localeCompare(a.date));
- return heading(g[0],page==='projects'?'داده‌های مشتریان و محتوای پروژه‌ها محلی می‌مانند.':'ثبت، جست‌وجو و مرور اطلاعات روی دستگاه.')
- +`<div class="tabs">${g[2].map(x=>B('tab',schema[x][0],x,x===t?'picked':'')).join('')}</div>
- <div class="row"><h2>${schema[t][0]}</h2>${B('new',`＋ ثبت ${schema[t][0]}`,t,'primary')}</div>
- ${t==='skill'?`<p>${B('lessons','کارگاه‌های تمرین')}</p>`:''}
- ${t==='english'?`<p class="hint">پیشنهاد ۲۰ دقیقه: ۵ دقیقه لغت، ۵ دقیقه گرامر، ۵ دقیقه شنیداری و ۵ دقیقه جمله‌سازی. ${B('level','سنجش کوتاه اولیه')}</p>`:''}
- ${['spigot','vitra'].includes(t)?'<p class="small">تقویم مستقل پروژه به شکل فهرست تاریخ‌دار انتشار و وضعیت تولید است.</p>':''}
- <form id="finder" class="actions"><label>جست‌وجو<input type="search" name="query" value="${esc(filter)}" maxlength="100"></label><button>اعمال</button>${filter?B('clear','پاک‌کردن فیلتر'):''}</form>
- <p class="small">${N(entries.length)} نتیجه</p>
- <div class="list">${entries.map(record).join('')||nothing()}</div>`;
-}
-
-function bars(rows){
- return rows.length?`<div class="bars">${rows.map(([k,v,max,label])=>`<div><span>${esc(k)}</span><progress value="${Math.max(0,v)}" max="${max||1}" aria-label="${esc(k)}"></progress><strong>${label}</strong></div>`).join('')}</div>`:nothing();
-}
-
-/* گزارش‌های روزانه، هفتگی و ماهانه */
-function reports(){
- const list=m.range(reportDate,mode);
- const st=m.stats(state,list);
-
- // مقایسه با بازه قبلی هم‌اندازه، نه فقط یک روز قبل از شروع بازه
- const prevList=m.previousRange(reportDate,mode);
- const prev=m.stats(state,prevList);
-
- const done=st.tasks.filter(x=>x.status==='انجام شد').length;
- const prevDone=prev.tasks.filter(x=>x.status==='انجام شد').length;
-
- const subject=m.subjects.map(s=>{
-  const a=st.study.filter(x=>x.subject===s);
-  const sum=k=>a.reduce((p,x)=>p+(+x[k]||0),0);
-  return [s,sum('minutes'),m.pct(sum('correct'),sum('wrong'),sum('tests'),state.settings.negative),sum('tests')];
- }).filter(x=>x[1]||x[3]);
-
- const causes=[...new Set(st.all.filter(x=>x.type==='error').map(x=>x.cause))]
-  .filter(Boolean)
-  .map(k=>[k,st.all.filter(x=>x.type==='error'&&x.cause===k).length])
-  .sort((a,b)=>b[1]-a[1]);
-
- const tracks=state.items.filter(x=>x.type==='topic');
- const sleep=st.sleep.length?D(Math.round(st.sleep.reduce((a,b)=>a+b,0)/st.sleep.length)):'—';
-
- const changeText=(now,before,formatter=x=>N(x))=>{
-  if(before==null)return '—';
-  const diff=now-before;
-  return `${diff>0?'+':''}${formatter(diff)}`;
- };
-
- const compareCard=(label,now,before,formatter=x=>N(x))=>
-  `<div class="compare-item"><small>${label}</small><strong>${formatter(now)}</strong><span class="small">دوره قبل: ${formatter(before)} · تغییر: ${changeText(now,before,formatter)}</span></div>`;
-
- const dailyData=list.map(d=>m.stats(state,[d]));
- const totalStudy=st.m||0;
- const goal=st.goal||0;
- const progress=goal?Math.min(100,totalStudy/goal*100):0;
-
- const ring=`<div class="report-ring-wrap">
-  <div class="report-ring" style="background:conic-gradient(#7b345d ${progress}%,#e9dfd9 0)">
-   <div class="report-ring-center"><strong>${N(progress)}٪</strong><small>تحقق هدف</small></div>
-  </div>
-  <div class="ring-legend"><span><i class="legend-dot study-dot"></i>مطالعه انجام‌شده: ${D(totalStudy)}</span><span><i class="legend-dot rest-dot"></i>باقی‌مانده هدف: ${D(Math.max(0,goal-totalStudy))}</span></div>
- </div>`;
-
- const weekBars=list.map((d,i)=>{
-  const v=dailyData[i];
-  const percent=v.goal?Math.min(100,v.m/v.goal*100):0;
-  const dayName=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{weekday:'short'}).format(m.dateOf(d));
-  return `<div class="week-column">
-   <div class="column-value">${N(v.m)} د</div>
-   <div class="column-track"><div class="column-fill" style="height:${percent}%"></div></div>
-   <small>${dayName}</small>
-  </div>`;
- }).join('');
-
- // گروه‌بندی ماه بر اساس هفته‌های واقعی تقویم
- const monthlyGroups=[];
- if(mode==='ماهانه'){
-  const groupsByWeek=new Map();
-  for(const d of list){
-   const start=m.weekStart(d);
-   if(!groupsByWeek.has(start))groupsByWeek.set(start,[]);
-   groupsByWeek.get(start).push(d);
-  }
-  for(const [start,dates] of groupsByWeek){
-   const value=dates.reduce((a,d)=>a+m.stats(state,[d]).m,0);
-   monthlyGroups.push({label:fmt(start),value});
-  }
- }
-
- const monthlyMax=Math.max(60,...monthlyGroups.map(x=>x.value));
- const monthlyBars=monthlyGroups.map(x=>[
-  x.label,x.value,monthlyMax,D(x.value)
- ]);
-
- const habitTypes=[
-  ['مطالعه','study'],
-  ['زبان','english'],
-  ['ورزش','exercise'],
-  ['بازنگری روزانه','journal']
- ];
- const habits=habitTypes.map(([label,type])=>{
-  const dates=new Set(st.all.filter(x=>x.type===type).map(x=>x.date));
-  return [label,dates.size];
- });
- const habitMax=Math.max(1,...habits.map(x=>x[1]));
-
- const periodComparison=`
-  <section class="card">
-   <h2>مقایسه با دوره قبل</h2>
-   <div class="compare-grid">
-    ${compareCard('مطالعه مفید',st.m,prev.m,D)}
-    ${compareCard('تعداد تست',st.test,prev.test,N)}
-    ${compareCard('زبان',st.english,prev.english,D)}
-    ${compareCard('ورزش',st.exercise,prev.exercise,D)}
-    ${compareCard('کارهای تکمیل‌شده',done,prevDone,N)}
-   </div>
-   <p class="small">مقایسه بر اساس یک بازه هم‌اندازه پیش از دوره انتخاب‌شده انجام می‌شود.</p>
-  </section>`;
-
- const studyChart=mode==='روزانه'?ring:mode==='هفتگی'?`
-  <div class="weekly-chart">${weekBars}</div>
-  <p class="small">ارتفاع ستون‌ها نسبت به هدف مطالعه همان روز محاسبه شده است.</p>`:bars(monthlyBars);
-
- const subjectMax=Math.max(60,...subject.map(x=>x[1]));
-
- const reflections=st.all
-  .filter(x=>x.type==='reflection'||x.type==='journal')
-  .sort((a,b)=>b.date.localeCompare(a.date));
-
- return heading('گزارش‌ها','اعداد از رکوردهای ثبت‌شده محاسبه می‌شوند؛ اطلاعات ثبت‌نشده در نمودارها نمایش داده نمی‌شوند.')
- +`<div class="tabs">
-  ${['روزانه','هفتگی','ماهانه'].map(x=>B('mode',x,x,mode===x?'picked':'')).join('')}
-  ${B('new','＋ بازنگری روزانه','journal')}
-  ${B('new','＋ بازنگری هفتگی / ماهانه','reflection','primary')}
- </div>
- ${datePicker(reportDate,'report-date')}
-
- <div class="metrics">
-  ${metric('مطالعه مفید',D(st.m))}
-  ${metric('تحقق هدف',`${N(st.goal?st.m/st.goal*100:0)}٪`)}
-  ${metric('تست / درصد تجمیعی',`${N(st.test)} / ${st.percent===null?'—':N(st.percent)+'٪'}`)}
-  ${metric('میانگین خواب ثبت‌شده',sleep)}
- </div>
-
- <div class="cards">
-  <section class="card">
-   <h2>${mode==='روزانه'?'سهم هدف مطالعه امروز':mode==='هفتگی'?'روند مطالعه در هفته':'مطالعه در هفته‌های ماه'}</h2>
-   ${studyChart}
-  </section>
-
-  <section class="card">
-   <h2>عملکرد درس‌ها</h2>
-   ${bars(subject.map(([s,v,p,t])=>[
-    s,v,subjectMax,`${N(v)} د · ${N(t)} تست · ${p===null?'—':N(p)+'٪'}`
-   ]))}
-   <h3>خطاهای پرتکرار</h3>
-   ${bars(causes.map(([s,v])=>[s,v,causes[0]?.[1]||1,N(v)]))}
-   <p class="small">مباحث ثبت‌شده: ${N(tracks.filter(x=>x.status==='تسلط‌یافته').length)} مسلط / ${N(tracks.filter(x=>x.status!=='تسلط‌یافته').length)} باقی‌مانده (کل دفتر)</p>
-  </section>
-
-  <section class="card">
-   <h2>عادت‌های ثبت‌شده</h2>
-   ${bars(habits.map(([label,count])=>[label,count,habitMax,`${N(count)} روز`]))}
-   <p class="small">این بخش فقط روزهایی را می‌شمارد که برای آن‌ها رکورد ثبت شده است؛ روز بدون رکورد لزوماً به معنی انجام‌ندادن کار نیست.</p>
-  </section>
-
-  <section class="card">
-   <h2>مرور عملکرد</h2>
-   <p>روزهای دارای مطالعهٔ ثبت‌شده: ${N(new Set(st.all.filter(x=>(x.type==='study'&&x.minutes>0)||(x.type==='video'&&x.active>0)).map(x=>x.date)).size)} از ${N(list.length)}</p>
-   <p>کارهای تکمیل‌شده: ${N(done)} · باز: ${N(st.tasks.length-done)}</p>
-   <p>زبان: ${D(st.english)} · ورزش / ریکاوری: ${D(st.exercise)}</p>
-   <p>زمان‌های ثبت‌شده در دفتر گوشی / کار: ${D(st.phone)}</p>
-   <p>تمرین مهارت: ${N(st.all.filter(x=>x.type==='skill').length)} · محتوای پروژه: ${N(st.all.filter(x=>['spigot','vitra'].includes(x.type)).length)} · سفارش: ${N(st.all.filter(x=>x.type==='customer').length)}</p>
-   <p class="hint">${st.m<st.goal?'هدف کامل نشده؛ یک بلوک مناسب‌تر انتخاب کن، نه اینکه خواب را کوتاه کنی.':'هدف مقایسه محقق شده؛ کیفیت تمرین و استراحت را مرور کن.'}</p>
-  </section>
-
-  ${periodComparison}
-
-  <section class="card">
-   <h2>بازنگری‌های ذخیره‌شده</h2>
-   <div class="list">${reflections.map(record).join('')||nothing('هنوز بازنگری روزانه یا دوره‌ای ثبت نشده است.')}</div>
-  </section>
- </div>`;
-}
-
-function settings(){
- const z=state.settings;
- return heading('تنظیمات','کنترل برنامه، پشتیبان و یادآورهای سیستم‌عامل.')
- +`<div class="cards">
-  <section class="card">
-   <h2>زمان‌بندی شخصی</h2>
-   <form id="settings-form">
-    <div class="formgrid">
-     <label>بیداری<input name="wake" type="time" value="${z.wake}" required></label>
-     <label>خواب هدف<input name="sleep" type="time" value="${z.sleep}" required></label>
-     <label>شروع مدرسه (اختیاری)<input name="schoolStart" type="time" value="${z.schoolStart}"></label>
-     <label>زبان روزانه (دقیقه)<input name="english" type="number" min="1" max="45" value="${z.english}" required></label>
-     <label>هدف مطالعه مدرسه (دقیقه)<input name="targetSchool" type="number" min="1" max="720" value="${z.targetSchool}" required></label>
-     <label>هدف مطالعه تعطیل (دقیقه)<input name="targetFree" type="number" min="1" max="720" value="${z.targetFree}" required></label>
-     <label class="checkbox wide"><input name="negative" type="checkbox" ${z.negative?'checked':''}>درصد با نمره منفی (هر ۳ غلط، یک صحیح)</label>
-    </div>
-    <button class="primary">ذخیره تنظیمات</button><p class="err"></p>
-   </form>
-  </section>
-  <section class="card">
-   <h2>داده و نصب</h2>
-   <p>پشتیبان حاوی داده‌های خصوصیِ بدون رمزنگاری است. آن را در محل امن نگه دار. بازیابی، کل داده‌های محلی جاری را جایگزین می‌کند.</p>
-   <div class="actions">
-    ${B('updateApp','بررسی و اعمال آپدیت','','primary')}
-    ${B('export','خروجی JSON')}
-    ${B('persist','درخواست ذخیره پایدار')}
-    ${B('install','نصب برنامه')}
-   </div>
-   <label>بازیابی فایل JSON<input type="file" id="restore" accept=".json,application/json"></label>
-   <p class="small">داده‌های حالت خصوصی یا پس از پاک‌کردن داده‌های سایت قابل اتکا نیستند. پشتیبان بگیر.</p>
-  </section>
- </div>
- <section class="card">${pushView()}</section>`;
-}
-
-function render(){
- if(!state)return;
- $('#nav').innerHTML=Object.entries(groups).map(([id,[title,icon]])=>`<a href="#${id}" ${id===page?'aria-current="page"':''}><i aria-hidden="true">${icon}</i>${title}</a>`).join('');
- view.innerHTML=page==='home'?home():page==='plan'?planPage():page==='reports'?reports():page==='settings'?settings():listPage();
- if(page==='settings')bindPush(view,state.settings,toast);
- tick();
-}
-
-function route(){
- const next=location.hash.slice(1);
- page=Object.hasOwn(groups,next)?next:'home';
- filter='';
- if(page==='plan')selected=m.iso();
- render();
- window.scrollTo(0,0);
-}
-
-function show(title,body){
- dialog.innerHTML=`<div class="row"><h2 id="dialog-title">${title}</h2>${B('close','بستن')}</div>${body}`;
- if(!dialog.open)dialog.showModal();
-}
-
-function field([k,l,t,v],r){
- const x=r[k]??'';
- const req=t==='required'||(r.type==='sleep'&&t==='time')||(r.type==='study'&&k==='minutes')?'required':'';
- if(t==='area')return `<label class="wide">${l}<textarea name="${k}" maxlength="8000">${esc(x)}</textarea></label>`;
- if(t==='select')return `<label>${l}<select name="${k}">${v.map(z=>`<option ${z===x?'selected':''}>${esc(z)}</option>`).join('')}</select></label>`;
- return `<label>${l}<input name="${k}" type="${t==='num'?'number':t==='required'?'text':t}" ${t==='num'?`min="0" max="${k==='mastery'?100:k==='price'?1000000000000:1440}" step="1"`:t==='date'?'min="2000-01-01" max="2099-12-31"':'maxlength="400"'} ${req} value="${esc(x)}"></label>`;
-}
-
-function editor(type,x={},date,template){
- const [name,fields]=schema[type],r={...x,type}, edit=x.id&&!template;
- show(edit?`ویرایش ${name}`:`ثبت ${name}`,`<form id="editor"><div class="formgrid"><label>${dateNames[type]||'تاریخ ثبت'}<input type="date" name="date" value="${esc(x.date||date||m.iso())}" min="2000-01-01" max="2099-12-31" required></label>${fields.map(y=>field(y,r)).join('')}</div><p class="err" role="alert"></p><button class="primary">ذخیره</button></form>`);
- $('#editor').onsubmit=async ev=>{
-  ev.preventDefault();
-  const form=ev.target, v=Object.fromEntries(new FormData(form)),err=form.querySelector('.err');
-  try{
-   for(const k of Object.keys(v))v[k]=v[k].trim();
-   const item={...v,type,id:edit?x.id:crypto.randomUUID()};
-   if('title'in v&&!v.title)throw Error('عنوان نباید خالی باشد.');
-   if(['task','study','school'].includes(type)&&((!!v.start)!=(!!v.end)||v.start&&v.start>=v.end))throw Error('ساعت شروع و پایان را با ترتیب درست وارد کن.');
-   if(type==='task'&&v.start&&m.clashes(m.agenda(state,v.date),{...item,id:template?x.id:item.id}))throw Error('با بلوک دیگری هم‌پوشانی دارد.');
-   if(type==='task'&&v.start&&(v.start<state.settings.wake||v.end>state.settings.sleep))throw Error('این بلوک با بازه بیداری تداخل دارد.');
-   if(type==='study'&&v.start&&+v.minutes>m.mins(v.end)-m.mins(v.start))throw Error('زمان مفید نمی‌تواند بیشتر از مدت جلسه باشد.');
-   if(type==='study'&&(+v.correct + +v.wrong + +v.blank !== +v.tests))throw Error('مجموع صحیح، غلط و نزده باید برابر تعداد تست باشد.');
-   if(type==='video'&&+v.watched>+v.length)throw Error('محل توقف بیشتر از طول فیلم است.');
-   if(type==='sleep'&&v.bed===v.wake)throw Error('ساعت خواب و بیداری یکسان است.');
-   if(type==='journal'&&!(v.accomplishment||v.blocker||v.tomorrow||v.note))throw Error('حداقل یک پاسخ بنویس.');
-
-   // اعتبارسنجی بازنگری هفتگی و ماهانه
-   if(type==='reflection'&&!(v.accomplishment||v.strength||v.blocker||v.lesson||v.nextAction||v.note))
-    throw Error('حداقل یک بخش از بازنگری را تکمیل کن.');
-
-   if(type==='reflection'&&v.from&&v.to&&v.from>v.to)
-    throw Error('تاریخ پایان دوره نباید قبل از تاریخ شروع باشد.');
-
-   await change(q=>{
-    if(template)q.overrides[x.id]={status:'حذف'};
-    if(edit)q.items=q.items.map(y=>y.id===item.id?item:y);
-    else q.items.push(item);
-   });
-   dialog.close();
-   toast('ذخیره شد.');
-  }catch(e){err.textContent=e.message;}
- };
-}
-
-function getTask(id){return m.agenda(state,selected).find(x=>x.id===id);}
-
-function status(q,x,value){
- if(x.template)q.overrides[x.id]={status:value};
- else if(value==='حذف')q.items=q.items.filter(y=>y.id!==x.id);
- else q.items.find(y=>y.id===x.id).status=value;
-}
-
-function start(){
- clearInterval(counter);
- show('فقط شروع کن',`<p class="hint">${['کتاب را باز کن.','فقط سؤال اول را حل کن.','فقط یک پاراگراف بخوان.','فقط پنج دقیقه شروع کن.'][Math.floor(Math.random()*4)]}</p><p>این تایمر فقط برای شروع است، نه اعلان پس‌زمینه و نه ثبت خودکار مطالعه.</p><p id="countdown">۰۵:۰۰</p>${B('timer','آغاز پنج دقیقه','','primary')}`);
-}
-
-const quiz=[
- ['I ___ a student.',['am','is','are'],0],
- ['She ___ English every day.',['study','studies','studying'],1],
- ['We ___ to school yesterday.',['go','went','gone'],1],
- ['If I had more time, I ___ read more.',['will','would','can'],1],
- ['Choose the closest meaning of “reliable”.',['trustworthy','expensive','rare'],0],
- ['By next Friday, I ___ the report.',['finished','will have finished','am finishing yesterday'],1]
+export const causes=[
+ 'بی‌دقتی','مفهومی','فراموشی','محاسباتی',
+ 'مدیریت زمان','بدخوانی سؤال','نکته جدید'
 ];
 
-function level(){
- show('سنجش اولیه انگلیسی',`<p class="small">این آزمون کوتاه فقط دستور و واژگان را می‌سنجد و معادل تعیین سطح رسمی نیست.</p><form id="quiz" dir="ltr">${quiz.map(([q,choices],i)=>`<label>${i+1}. ${esc(q)}<select name="q${i}" required><option value="">Choose…</option>${choices.map((c,j)=>`<option value="${j}">${esc(c)}</option>`).join('')}</select></label>`).join('')}<button class="primary">نتیجه و ذخیره</button><p class="err" dir="rtl"></p></form>`);
- $('#quiz').onsubmit=async e=>{
-  e.preventDefault();
-  const f=e.target,form=new FormData(f),score=quiz.filter((x,i)=>+form.get(`q${i}`)===x[2]).length;
-  const res=`${N(score)} از ${N(quiz.length)} · ${score<3?'از ساخت جمله ساده شروع کن.':score<5?'زمان‌ها و خواندن متن کوتاه را تمرین کن.':'برای ارزیابی دقیق‌تر، شنیداری و مکالمه را هم بسنج.'}`;
-  try{
-   await change(q=>q.items.push({id:crypto.randomUUID(),type:'english',date:m.iso(),kind:'آزمون دوره‌ای',title:'سنجش کوتاه',note:res}));
-   dialog.close();
-   toast(res);
-  }catch(e){f.querySelector('.err').textContent=e.message;}
- };
-}
+export const schema={
 
-function download(){
- const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
- const url=URL.createObjectURL(blob),a=document.createElement('a');
- a.href=url;
- a.download=`setayesh-${m.iso()}.json`;
- a.click();
- setTimeout(()=>URL.revokeObjectURL(url),30000);
-}
+ task:['کار برنامه',[
+  title,
+  s('category','دسته',categories),
+  start,
+  end,
+  s('status','وضعیت',['باز','در حال انجام','انجام شد']),
+  s('priority','اولویت',['عادی','بالا']),
+  note
+ ]],
 
-/* بررسی و اعمال آپدیت */
-async function updateApp(){
- if(!navigator.onLine){
-  toast('برای دریافت نسخه جدید به اینترنت وصل شو.');
-  return;
- }
+ study:['جلسه مطالعه',[
+  subject,topic,
+  s('kind','نوع',['آموزش','تمرین','تست','مرور','آزمون']),
+  start,end,minutes,
+  n('mastery','تسلط (۰ تا ۱۰۰)'),
+  n('tests','تعداد تست'),
+  n('correct','صحیح'),
+  n('wrong','غلط'),
+  n('blank','نزده'),
+  s('review','نیاز به مرور',['خیر','فردا','۳ روز بعد','۷ روز بعد']),
+  note
+ ]],
 
- toast('در حال بررسی نسخه جدید برنامه...');
+ topic:['مبحث کنکور',[
+  subject,title,f('chapter','فصل'),f('module','پودمان'),f('sub','زیرمبحث'),
+  s('status','وضعیت',['شروع نشده','در حال مطالعه','نیاز به تمرین','تسلط‌یافته']),
+  note
+ ]],
 
- try{
-  if(!('serviceWorker'in navigator)){
-   toast('مرورگر از به‌روزرسانی خودکار پشتیبانی نمی‌کند.');
-   return;
-  }
+ error:['تحلیل خطا',[
+  subject,topic,title,
+  f('question','صورت سؤال','area'),
+  s('cause','علت',causes),
+  f('answer','راه‌حل','area'),
+  note,d('review','تاریخ مرور')
+ ]],
 
-  const registration=await navigator.serviceWorker.getRegistration('./');
+ review:['مرور زمان‌بندی‌شده',[
+  subject,topic,
+  s('round','نوبت',['اول','دوم','سوم','جمع‌بندی']),
+  s('status','وضعیت',['باز','انجام شد']),
+  note
+ ]],
 
-  if(registration){
-   await registration.update();
+ school:['تکلیف مدرسه',[
+  title,subject,
+  s('kind','نوع',['تکلیف','امتحان','پروژه','پرسش کلاسی']),
+  start,end,d('due','مهلت'),n('grade','نمره'),
+  s('status','وضعیت',['باز','در حال انجام','انجام شده']),
+  note
+ ]],
 
-   const worker=registration.installing;
+ video:['دوره آموزشی',[
+  title,f('course','دوره'),topic,
+  n('length','طول فیلم (دقیقه)'),
+  n('watched','محل توقف (دقیقه)'),
+  n('active','تمرین مفید (دقیقه)'),
+  s('status','وضعیت',['شروع نشده','در حال مشاهده','تمام شده']),
+  note,
+  f('practice','تمرین عملی','area'),
+  f('test','آزمون / خروجی','area'),
+  f('issues','اشکالات','area'),
+  d('review','مرور بعدی')
+ ]],
 
-   if(worker){
-    await new Promise(resolve=>{
-     if(worker.state==='activated'){
-      resolve();
-      return;
-     }
+ customer:['مشتری اسپیگات',[
+  title,f('contact','راه ارتباطی'),f('product','محصول'),
+  n('count','تعداد'),n('price','قیمت'),
+  s('payment','پرداخت',['نامشخص','بیعانه','کامل','تسویه نشده']),
+  d('delivery','تاریخ تحویل'),f('deliveryTime','زمان تحویل'),
+  s('status','وضعیت',['جدید','پیگیری','در حال ساخت','ارسال شد','تحویل شد','لغو']),
+  d('callback','تماس بعدی'),f('callbackTime','ساعت تماس','time'),note
+ ]],
 
-     const finish=()=>{
-      if(worker.state==='activated'||worker.state==='redundant'){
-       worker.removeEventListener('statechange',finish);
-       resolve();
-      }
-     };
+ spigot:['محتوای آقای اسپیگات',[
+  title,s('status','وضعیت',['ایده','سناریو','ضبط','تدوین','منتشر شد']),
+  f('hook','قلاب'),f('script','سناریو','area'),
+  f('caption','کپشن','area'),f('cover','کاور'),
+  f('metrics','آمار عملکرد','area'),note
+ ]],
 
-     worker.addEventListener('statechange',finish);
-     setTimeout(()=>{
-      worker.removeEventListener('statechange',finish);
-      resolve();
-     },8000);
-    });
-   }
-  }
+ vitra:['محتوای ویترا',[
+  title,s('status','وضعیت',['ایده','سناریو','ضبط','تدوین','منتشر شد']),
+  f('hook','قلاب'),f('script','سناریو','area'),
+  f('caption','کپشن','area'),f('cover','کاور'),
+  f('subtitle','زیرنویس','area'),f('metrics','آمار عملکرد','area'),note
+ ]],
 
-  toast('بررسی انجام شد؛ برنامه دوباره بارگذاری می‌شود.');
-  setTimeout(()=>location.reload(),700);
+ english:['تمرین انگلیسی',[
+  s('kind','مهارت',['لغت','گرامر','شنیداری','خواندن','نوشتن','مکالمه','آزمون دوره‌ای']),
+  title,minutes,note,d('review','مرور بعدی')
+ ]],
 
- }catch(error){
-  console.error(error);
-  toast('به‌روزرسانی انجام نشد؛ اتصال اینترنت را بررسی کن.');
- }
-}
+ skill:['تمرین مهارت',[
+  title,
+  s('kind','حوزه',[
+   'تولید محتوا','ارتباطات','سخنوری','رشد فردی',
+   'هوش مصنوعی','برنامه‌نویسی','مذاکره',
+   'مدیریت زمان','سایر'
+  ]),
+  minutes,
+  f('practice','تمرین / خروجی','area'),
+  note
+ ]],
 
-document.addEventListener('click',async e=>{
- const btn=e.target.closest('[data-action]');
- if(!btn||!state)return;
- const {action,id}=btn.dataset;
- try{
-  switch(action){
-   case 'close':dialog.close();break;
+ sleep:['خواب',[
+  f('bed','ساعت خواب','time'),
+  f('wake','ساعت بیداری','time'),
+  s('quality','کیفیت',['عالی','خوب','متوسط','ضعیف']),
+  note
+ ]],
 
-   case 'new':
-    editor(id,{},page==='plan'?selected:page==='reports'?reportDate:undefined);
-    break;
+ exercise:['تحرک و ورزش',[
+  title,
+  s('kind','نوع',['پیاده‌روی','یوگا','قدرتی','کششی','سایر']),
+  minutes,note
+ ]],
 
-   case 'edit':{
-    const x=state.items.find(y=>y.id===id);
-    if(x)editor(x.type,x);
-    break;
-   }
+ food:['تغذیه و آب',[
+  s('kind','وعده',['صبحانه','ناهار','شام','میان‌وعده','آب']),
+  n('water','آب (میلی‌لیتر)'),
+  note
+ ]],
 
-   case 'delete':
-    if(confirm('این رکورد حذف شود؟'))await change(q=>q.items=q.items.filter(x=>x.id!==id));
-    break;
+ care:['مراقبت شخصی',[
+  title,
+  s('kind','نوع',['بهداشت','مراقبت پوست','استراحت','تفریح']),
+  d('review','یادآوری بعدی'),
+  note
+ ]],
 
-   case 'day':selected=id;render();break;
-   case 'week':selected=+id?m.addDays(selected,+id):m.iso();render();break;
-   case 'tab':tab[page]=id;filter='';render();break;
-   case 'clear':filter='';render();break;
-   case 'mode':mode=id;render();break;
+ phone:['استفاده از گوشی',[
+  s('kind','نوع',['شبکه اجتماعی','پیام‌رسان','آموزشی','سرگرمی','کار']),
+  minutes,f('trigger','محرک'),note
+ ]],
 
-   case 'toggle':{
-    const x=getTask(id);
-    if(x)await change(q=>status(q,x,x.status==='انجام شد'?'باز':'انجام شد'));
-    break;
-   }
+ journal:['بازنگری روزانه',[
+  f('accomplishment','امروز چه کردم؟','area'),
+  f('blocker','مانع امروز چه بود؟','area'),
+  f('tomorrow','فردا چه چیزی را بهتر می‌کنم؟','area'),
+  note
+ ]],
 
-   case 'removeTask':{
-    const x=getTask(id);
-    if(x&&confirm('این بلوک برای این روز حذف شود؟'))await change(q=>status(q,x,'حذف'));
-    break;
-   }
+ reflection:['بازنگری هفتگی و ماهانه',[
+  s('period','نوع بازنگری',['هفتگی','ماهانه']),
+  d('from','شروع دوره'),d('to','پایان دوره'),
+  f('accomplishment','مهم‌ترین دستاوردهای این دوره','area'),
+  f('strength','نقاط قوت عملکردم','area'),
+  f('blocker','مهم‌ترین موانع و مشکلات','area'),
+  f('lesson','چه چیزی یاد گرفتم؟','area'),
+  f('nextAction','اقدام‌های دوره بعد','area'),
+  note
+ ]]
+};
 
-   case 'editTask':{
-    const x=getTask(id);
-    if(x)editor('task',x,selected,x.template);
-    break;
-   }
+export const groups={
+ home:['خانه','⌂',[]],
+ plan:['برنامه هفتگی','▦',[]],
+ study:['کنکور','✎',['study','topic','error','review','video']],
+ projects:['پروژه‌ها','◇',['customer','spigot','vitra']],
+ growth:['رشد فردی','✦',['english','skill','sleep','exercise','food','care','phone','journal']],
+ reports:['گزارش‌ها','▤',['reflection']],
+ settings:['تنظیمات','⚙',[]]
+};
 
-   case 'move':{
-    const x=getTask(id), slot=x&&m.suggestSlot(state,x,selected);
-    if(!slot){toast('فردا جای خالی مناسب پیدا نشد؛ برنامه را دستی تغییر بده.');break;}
-    if(confirm(`انتقال به ${fmt(slot.date)} ساعت ${T(slot.start)} تا ${T(slot.end)}؟`))
-     await change(q=>{
-      if(!x.template)Object.assign(q.items.find(y=>y.id===id),slot);
-      else{
-       status(q,x,'حذف');
-       q.items.push({type:'task',id:crypto.randomUUID(),title:x.title,category:x.category,status:'باز',...slot});
-      }
-     });
-    break;
-   }
-
-   case 'taskReminder':{
-    const x=getTask(id);
-    if(x){
-     sessionStorage.setItem('setayesh-reminder-draft',JSON.stringify({date:x.date,time:x.start,category:x.category}));
-     location.hash='settings';
-    }
-    break;
-   }
-
-   case 'linkedReminder':{
-    const x=state.items.find(y=>y.id===id);
-    if(x){
-     sessionStorage.setItem('setayesh-reminder-draft',JSON.stringify({date:x.callback||x.review||x.due,time:x.callbackTime||'17:00',category:x.callback?'تماس':'مرور'}));
-     location.hash='settings';
-    }
-    break;
-   }
-
-   case 'doneReview':{
-    const x=state.items.find(y=>y.id===id);
-    if(x&&confirm('انجام این مرور ثبت شود؟'))
-     await change(q=>{
-      if(x.type==='review')q.items.find(y=>y.id===id).status='انجام شد';
-      else q.items.push({type:'review',id:crypto.randomUUID(),date:x.review,subject:x.subject,topic:x.topic||x.title,round:'اول',status:'انجام شد',note:`مبدأ:${id}`});
-     });
-    break;
-   }
-
-   case 'start':start();break;
-
-   case 'timer':{
-    clearInterval(counter);
-    const until=Date.now()+300000;
-    counter=setInterval(()=>{
-     const el=$('#countdown');
-     if(!el||!dialog.open){clearInterval(counter);return;}
-     const s=Math.max(0,Math.ceil((until-Date.now())/1000));
-     el.textContent=s?T(`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`):'پنج دقیقه تمام شد؛ ادامه یا استراحت، انتخاب توست.';
-     if(!s)clearInterval(counter);
-    },250);
-    break;
-   }
-
-   case 'level':level();break;
-
-   case 'lessons':
-    show('کارگاه‌های تمرین',`<div class="list">${lessons.map(([k,t,p,n],i)=>`<div class="item"><small>${k}</small><strong>${t}</strong><p>${p}</p><p>${n}</p>${B('lesson','ثبت تمرین',i)}</div>`).join('')}</div>`);
-    break;
-
-   case 'lesson':{
-    const [kind,title,practice,note]=lessons[+id];
-    editor('skill',{kind,title,practice,note});
-    break;
-   }
-
-   case 'export':download();break;
-
-   case 'persist':
-    toast((await navigator.storage?.persist?.())?'مرورگر ذخیره پایدار را پذیرفت. پشتیبان همچنان لازم است.':'مرورگر ذخیره پایدار را تأیید نکرد؛ پشتیبان بگیر.');
-    break;
-
-   case 'install':
-    if(installer){await installer.prompt();installer=null;}
-    else toast('در Chrome از منو «نصب برنامه» یا «افزودن به صفحه اصلی» را بررسی کن.');
-    break;
-
-   case 'updateApp':
-    await updateApp();
-    break;
-  }
- }catch(err){toast(err.message);}
-});
-
-view.addEventListener('change',async e=>{
- const i=e.target;
- if(i.id==='plan-date'&&i.reportValidity()){selected=i.value||m.iso();render();}
- if(i.id==='report-date'&&i.reportValidity()){reportDate=i.value||m.iso();render();}
-
- if(i.id==='restore'&&i.files[0]){
-  try{
-   const f=i.files[0];
-   if(f.size>16000000)throw Error('فایل بزرگ‌تر از ۱۶ مگابایت است.');
-   const restored=clean(JSON.parse(await f.text()));
-   if(confirm(`${N(restored.items.length)} رکورد بازیابی و تمام داده‌های جاری جایگزین شود؟`)){
-    await change(s=>Object.assign(s,restored));
-    toast('پشتیبان بازیابی شد.');
-   }
-  }catch(e){toast(e instanceof SyntaxError?'فایل JSON خوانده نشد.':e.message);}
-  finally{i.value='';}
- }
-});
-
-view.addEventListener('submit',async e=>{
- const f=e.target;
-
- if(f.id==='finder'){
-  e.preventDefault();
-  filter=new FormData(f).get('query');
-  render();
- }
-
- if(f.id==='settings-form'){
-  e.preventDefault();
-  const a=new FormData(f);
-  const z={
-   wake:a.get('wake'),
-   sleep:a.get('sleep'),
-   schoolStart:a.get('schoolStart'),
-   english:+a.get('english'),
-   targetSchool:+a.get('targetSchool'),
-   targetFree:+a.get('targetFree'),
-   negative:a.has('negative')
-  };
-
-  try{
-   if(z.sleep<=z.wake||m.elapsed(z.sleep,z.wake)<480)throw Error('با این ساعت بیداری دست‌کم ۸ ساعت فرصت خواب نگه دار.');
-   if(z.wake>'10:00'||z.sleep<'18:00'||z.schoolStart&&(z.schoolStart>='13:00'||m.mins(z.schoolStart)<m.mins(z.wake)+60))throw Error('ساعت‌ها با قالب برنامهٔ روزانه یا آمادگی مدرسه سازگار نیستند.');
-   await change(q=>q.settings=z);
-   toast('تنظیمات ذخیره شد؛ ساعت اعلان‌ها جداگانه بررسی می‌شود.');
-  }catch(e){f.querySelector('.err').textContent=e.message;}
- }
-});
-
-window.addEventListener('hashchange',route);
-window.addEventListener('online',tick);
-window.addEventListener('offline',tick);
-
-window.addEventListener('beforeinstallprompt',e=>{
- e.preventDefault();
- installer=e;
-});
-
-try{
- state=await load();
- route();
- setInterval(tick,15000);
- if('serviceWorker'in navigator)
-  navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(()=>toast('ثبت سرویس آفلاین انجام نشد.'));
-}catch{
- view.textContent='دفتر محلی باز نشد. اجازه ذخیره‌سازی مرورگر را بررسی کنید.';
-}
+export const lessons=[
+ ['تولید محتوا','شناخت مخاطب','سه نیاز واقعی مخاطب را بنویس.','یک ایده را برای یک مخاطب مشخص بازنویسی کن.'],
+ ['تولید محتوا','نوشتن قلاب','برای یک موضوع سه شروع متفاوت بنویس.','قلاب را کوتاه و روشن کن.'],
+ ['ارتباطات','گوش‌دادن فعال','حرف طرف مقابل را بدون قطع‌کردن خلاصه کن.','یک گفت‌وگوی واقعی را بازنگری کن.'],
+ ['سخنوری','بیان یک‌دقیقه‌ای','یک موضوع را در یک دقیقه توضیح بده.','صدایت را ضبط و وضوح را بررسی کن.'],
+ ['رشد فردی','بازنگری هفتگی','سه موفقیت و یک مانع را بنویس.','برای مانع یک اقدام کوچک تعیین کن.'],
+ ['مدیریت زمان','برآورد زمان','زمان واقعی سه کار را ثبت کن.','برآورد فردا را با داده واقعی تنظیم کن.']
+];
