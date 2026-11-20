@@ -214,7 +214,6 @@ function reports(){
  const totalStudy=st.m||0;
  const goal=st.goal||0;
  const progress=goal?Math.min(100,totalStudy/goal*100):0;
- const remaining=Math.max(0,100-progress);
 
  const ring=`<div class="report-ring-wrap">
   <div class="report-ring" style="background:conic-gradient(#7b345d ${progress}%,#e9dfd9 0)">
@@ -357,9 +356,14 @@ function settings(){
   <section class="card">
    <h2>داده و نصب</h2>
    <p>پشتیبان حاوی داده‌های خصوصیِ بدون رمزنگاری است. آن را در محل امن نگه دار. بازیابی، کل داده‌های محلی جاری را جایگزین می‌کند.</p>
-   <div class="actions">${B('export','خروجی JSON')}${B('persist','درخواست ذخیره پایدار')}${B('install','نصب برنامه')}</div>
+   <div class="actions">
+    ${B('updateApp','بررسی و اعمال آپدیت','','primary')}
+    ${B('export','خروجی JSON')}
+    ${B('persist','درخواست ذخیره پایدار')}
+    ${B('install','نصب برنامه')}
+   </div>
    <label>بازیابی فایل JSON<input type="file" id="restore" accept=".json,application/json"></label>
-   <p class="small">داده‌های حالت خصوصی یا پس از پاک‌کردن داده‌های سایت قابل اتکا نیستند. حذف اپ یا تغییر دامنه ممکن است دسترسی به دفتر قبلی را قطع کند.</p>
+   <p class="small">داده‌های حالت خصوصی یا پس از پاک‌کردن داده‌های سایت قابل اتکا نیستند. پشتیبان بگیر.</p>
   </section>
  </div>
  <section class="card">${pushView()}</section>`;
@@ -469,6 +473,60 @@ function download(){
  setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 
+/* بررسی و اعمال آپدیت */
+async function updateApp(){
+ if(!navigator.onLine){
+  toast('برای دریافت نسخه جدید به اینترنت وصل شو.');
+  return;
+ }
+
+ toast('در حال بررسی نسخه جدید برنامه...');
+
+ try{
+  if(!('serviceWorker'in navigator)){
+   toast('مرورگر از به‌روزرسانی خودکار پشتیبانی نمی‌کند.');
+   return;
+  }
+
+  const registration=await navigator.serviceWorker.getRegistration('./');
+
+  if(registration){
+   await registration.update();
+
+   const worker=registration.installing;
+
+   if(worker){
+    await new Promise(resolve=>{
+     if(worker.state==='activated'){
+      resolve();
+      return;
+     }
+
+     const finish=()=>{
+      if(worker.state==='activated'||worker.state==='redundant'){
+       worker.removeEventListener('statechange',finish);
+       resolve();
+      }
+     };
+
+     worker.addEventListener('statechange',finish);
+     setTimeout(()=>{
+      worker.removeEventListener('statechange',finish);
+      resolve();
+     },8000);
+    });
+   }
+  }
+
+  toast('بررسی انجام شد؛ برنامه دوباره بارگذاری می‌شود.');
+  setTimeout(()=>location.reload(),700);
+
+ }catch(error){
+  console.error(error);
+  toast('به‌روزرسانی انجام نشد؛ اتصال اینترنت را بررسی کن.');
+ }
+}
+
 document.addEventListener('click',async e=>{
  const btn=e.target.closest('[data-action]');
  if(!btn||!state)return;
@@ -476,35 +534,45 @@ document.addEventListener('click',async e=>{
  try{
   switch(action){
    case 'close':dialog.close();break;
-   case 'new':editor(id,{},page==='plan'?selected:page==='reports'?reportDate:undefined);break;
+
+   case 'new':
+    editor(id,{},page==='plan'?selected:page==='reports'?reportDate:undefined);
+    break;
+
    case 'edit':{
     const x=state.items.find(y=>y.id===id);
     if(x)editor(x.type,x);
     break;
    }
+
    case 'delete':
     if(confirm('این رکورد حذف شود؟'))await change(q=>q.items=q.items.filter(x=>x.id!==id));
     break;
+
    case 'day':selected=id;render();break;
    case 'week':selected=+id?m.addDays(selected,+id):m.iso();render();break;
    case 'tab':tab[page]=id;filter='';render();break;
    case 'clear':filter='';render();break;
    case 'mode':mode=id;render();break;
+
    case 'toggle':{
     const x=getTask(id);
     if(x)await change(q=>status(q,x,x.status==='انجام شد'?'باز':'انجام شد'));
     break;
    }
+
    case 'removeTask':{
     const x=getTask(id);
     if(x&&confirm('این بلوک برای این روز حذف شود؟'))await change(q=>status(q,x,'حذف'));
     break;
    }
+
    case 'editTask':{
     const x=getTask(id);
     if(x)editor('task',x,selected,x.template);
     break;
    }
+
    case 'move':{
     const x=getTask(id), slot=x&&m.suggestSlot(state,x,selected);
     if(!slot){toast('فردا جای خالی مناسب پیدا نشد؛ برنامه را دستی تغییر بده.');break;}
@@ -518,6 +586,7 @@ document.addEventListener('click',async e=>{
      });
     break;
    }
+
    case 'taskReminder':{
     const x=getTask(id);
     if(x){
@@ -526,6 +595,7 @@ document.addEventListener('click',async e=>{
     }
     break;
    }
+
    case 'linkedReminder':{
     const x=state.items.find(y=>y.id===id);
     if(x){
@@ -534,6 +604,7 @@ document.addEventListener('click',async e=>{
     }
     break;
    }
+
    case 'doneReview':{
     const x=state.items.find(y=>y.id===id);
     if(x&&confirm('انجام این مرور ثبت شود؟'))
@@ -543,7 +614,9 @@ document.addEventListener('click',async e=>{
      });
     break;
    }
+
    case 'start':start();break;
+
    case 'timer':{
     clearInterval(counter);
     const until=Date.now()+300000;
@@ -556,22 +629,32 @@ document.addEventListener('click',async e=>{
     },250);
     break;
    }
+
    case 'level':level();break;
+
    case 'lessons':
     show('کارگاه‌های تمرین',`<div class="list">${lessons.map(([k,t,p,n],i)=>`<div class="item"><small>${k}</small><strong>${t}</strong><p>${p}</p><p>${n}</p>${B('lesson','ثبت تمرین',i)}</div>`).join('')}</div>`);
     break;
+
    case 'lesson':{
     const [kind,title,practice,note]=lessons[+id];
     editor('skill',{kind,title,practice,note});
     break;
    }
+
    case 'export':download();break;
+
    case 'persist':
     toast((await navigator.storage?.persist?.())?'مرورگر ذخیره پایدار را پذیرفت. پشتیبان همچنان لازم است.':'مرورگر ذخیره پایدار را تأیید نکرد؛ پشتیبان بگیر.');
     break;
+
    case 'install':
     if(installer){await installer.prompt();installer=null;}
     else toast('در Chrome از منو «نصب برنامه» یا «افزودن به صفحه اصلی» را بررسی کن.');
+    break;
+
+   case 'updateApp':
+    await updateApp();
     break;
   }
  }catch(err){toast(err.message);}
@@ -581,6 +664,7 @@ view.addEventListener('change',async e=>{
  const i=e.target;
  if(i.id==='plan-date'&&i.reportValidity()){selected=i.value||m.iso();render();}
  if(i.id==='report-date'&&i.reportValidity()){reportDate=i.value||m.iso();render();}
+
  if(i.id==='restore'&&i.files[0]){
   try{
    const f=i.files[0];
@@ -597,11 +681,13 @@ view.addEventListener('change',async e=>{
 
 view.addEventListener('submit',async e=>{
  const f=e.target;
+
  if(f.id==='finder'){
   e.preventDefault();
   filter=new FormData(f).get('query');
   render();
  }
+
  if(f.id==='settings-form'){
   e.preventDefault();
   const a=new FormData(f);
@@ -614,6 +700,7 @@ view.addEventListener('submit',async e=>{
    targetFree:+a.get('targetFree'),
    negative:a.has('negative')
   };
+
   try{
    if(z.sleep<=z.wake||m.elapsed(z.sleep,z.wake)<480)throw Error('با این ساعت بیداری دست‌کم ۸ ساعت فرصت خواب نگه دار.');
    if(z.wake>'10:00'||z.sleep<'18:00'||z.schoolStart&&(z.schoolStart>='13:00'||m.mins(z.schoolStart)<m.mins(z.wake)+60))throw Error('ساعت‌ها با قالب برنامهٔ روزانه یا آمادگی مدرسه سازگار نیستند.');
@@ -626,6 +713,7 @@ view.addEventListener('submit',async e=>{
 window.addEventListener('hashchange',route);
 window.addEventListener('online',tick);
 window.addEventListener('offline',tick);
+
 window.addEventListener('beforeinstallprompt',e=>{
  e.preventDefault();
  installer=e;
