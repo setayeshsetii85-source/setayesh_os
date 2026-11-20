@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash,createHmac,timingSafeEqual,randomUUID} from 'node:crypto';
 import {rules,checkedConfig,checkedSub,onceValid,clock,due} from './public/push-shared.js';
-const root=dirname(fileURLToPath(import.meta.url)), files=new Set('index.html app.js model.js schema.js store.js push.js push-shared.js sw.js style.css manifest.webmanifest icon-192.png icon-512.png vazir.woff2 FONT-LICENSE.txt'.split(' '));
+const root=dirname(fileURLToPath(import.meta.url)), files=new Set('index.html app.js center.js expansion.js vault.js center.css model.js schema.js store.js push.js push-shared.js sw.js style.css manifest.webmanifest icon-192.png icon-512.png vazir.woff2 FONT-LICENSE.txt'.split(' '));
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.webmanifest':'application/manifest+json','.png':'image/png','.woff2':'font/woff2','.txt':'text/plain; charset=utf-8'};
 const hash=s=>createHash('sha256').update(s).digest();
 const equal=(a,b)=>timingSafeEqual(hash(a),hash(b));

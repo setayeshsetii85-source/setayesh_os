@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {empty,range,subjects,monthKey} from '../public/model.js';
+import {cash,csv,overlaps,subjectStats,timeSummary,timerSegments} from '../public/expansion.js';
+import {seal,unseal} from '../public/vault.js';
+const d='2026-11-20', a={id:'a',type:'activity',date:d,start:'08:00',end:'08:50',category:'تحصیل',energy:4};
+test('exclusive timeline and independent totals',()=>{assert.equal(overlaps([a],{...a,id:'b',start:'08:20'}),true);assert.equal(overlaps([a],{...a,id:'b',start:'08:50',end:'09:00'}),false);const v=timeSummary([a,{type:'study',date:d,minutes:90}],[d]);assert.equal(v.total,50);assert.equal(v.peak,'08');assert.equal(v.by['تحصیل'],50);});
+test('timer uses elapsed wall time and rejects crossing midnight',()=>{const ms=(hour,min)=>new Date(2026,10,20,hour,min).getTime();assert.deepEqual(timerSegments(ms(8,0),ms(9,20)),{date:d,start:'08:00',end:'09:20'});assert.throws(()=>timerSegments(ms(23,59),ms(24,0)),/نیمه‌شب/);});
+test('Persian month and all independent subjects',()=>{const days=range(d,'ماهانه');assert.ok(days.length===29||days.length===30||days.length===31);assert.equal(new Set(days.map(monthKey)).size,1);assert.equal(new Set(subjects).size,21);const subject=subjects[0];const s=subjectStats([{date:d,type:'exam',subject,correct:7,wrong:3,tests:10},{date:d,type:'study',subject,minutes:45}],subject,true);assert.equal(s.percent,60);assert.equal(s.minutes,45);});
+test('cash ignores sales and CSV exports user strings safely',()=>{assert.deepEqual(cash([{type:'cash',date:d,kind:'درآمد',amount:100},{type:'sale',date:d,received:80},{type:'cash',date:d,kind:'هزینه',amount:20}],[d]),{income:100,expense:20});assert.ok(csv([{...a,title:'=1+1'}]).includes('"\'=1+1"'));});
+test('encrypted backup round trip, wrong password and authentication failure',async()=>{const data={...empty(),items:[a]}, pass='this is a long passphrase';const c=await seal(data,pass);assert.deepEqual(await unseal(c,pass),data);await assert.rejects(unseal(c,'wrong password'));c.cipher=(c.cipher[0]==='A'?'B':'A')+c.cipher.slice(1);await assert.rejects(unseal(c,pass));});
